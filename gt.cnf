@@ -1,4 +1,4 @@
-# edit this and move it to ~/.gt.cnf
+# edit this and move it to ~/gt/gt.cnf
 [default]
 ## your ssh
 sshcom = "/usr/bin/ssh"
