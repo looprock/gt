@@ -1,0 +1,238 @@
+#!/usr/bin/env python
+# Author: Douglas Land
+# Version: 3.0
+# Date: 07/10/2010
+# Verified on Python 2.6.1
+
+import sys, re, os, xmlrpclib, getopt, socket, getpass
+from ConfigParser import SafeConfigParser
+
+gtconfig = os.path.expanduser("~/gt/gt.cnf")
+if os.path.exists(gtconfig):
+   parser = SafeConfigParser()
+   parser.read(gtconfig)
+else:
+   print "No config file found!. Please create: %s" % gtconfig
+   sys.exit(1)
+
+# configuration moved to ~/.gt.cnf
+usehosts = parser.get('default', 'usehosts').strip('"')
+hostfile = os.path.expanduser(parser.get('default', 'hostfile').strip('"'))
+defaultdomain = parser.get('default', 'defaultdomain').strip('"')
+defaultlogin = parser.get('default', 'defaultlogin').strip('"')
+defaultport = parser.get('default', 'defaultport').strip('"')
+ec2identity = parser.get('default', 'ec2identity').strip('"')
+machinfo_server = parser.get('default', 'machinfo_server').strip('"')
+machinfo_path = parser.get('default', 'machinfo_path').strip('"')
+useuc = parser.get('default', 'useuc').strip('"')
+sshbargs = parser.get('default', 'sshbargs').strip('"')
+sshcom = parser.get('default', 'sshcom').strip('"')
+usemi = parser.get('default', 'usemi').strip('"')
+
+# setting some default values
+uclookup_path = "cgi-bin/uc-soap.py"
+machinfo_url = "http://%s/%s" % (machinfo_server,machinfo_path)
+uclookup_url = "http://%s/%s" % (machinfo_server,uclookup_path)
+ec2 = 'F'
+
+if usemi == "T":
+	try:
+	  tmis = socket.gethostbyaddr(machinfo_server)[0]
+	except:
+	  usemi = "F"
+	  useuc = "F"
+else:
+	tmis = "F"
+
+if tmis != machinfo_server:
+	usemi = "F"
+	useuc = "F"
+
+
+def usage():
+  print sys.argv[0] + """ [options] [search string]
+  options:
+
+  -h - print usage summary
+  -l - set login
+  -p - set port
+  -i - set identity file
+  -e - ec2, assumes root + ec2-identity
+  -m - override default for machinfo usage. T - enable, F - disable
+  -d - show debugging information while parsing (not implemented yet)"""
+
+try:                                
+    opts, remainder = getopt.gnu_getopt(sys.argv[1:], "hl:p:i:em:d", ["help", "login=", "port=", "identity=", "ec2", "machinfo="])
+except getopt.GetoptError:          
+    usage()                         
+    sys.exit(2)                     
+for opt, arg in opts:                
+    if opt in ("-h", "--help"):      
+        usage()                     
+        sys.exit()                  
+    elif opt == '-d':                
+        global _debug               
+        _debug = 1                  
+    elif opt in ("-l", "--login"): 
+        defaultlogin = arg
+    elif opt in ("-p", "--port"): 
+        defaultport = arg
+    elif opt in ("-i", "--identity"): 
+	identity = arg
+    elif opt in ("-e", "--ec2"):
+        defaultlogin = "root"
+	ec2 = 'T'
+    elif opt in ("-m", "--machinfo"):
+        usemi = arg
+
+def uniqify(seq, idfun=None):  
+    # order preserving 
+    if idfun is None: 
+        def idfun(x): return x 
+    seen = {} 
+    result = [] 
+    for item in seq: 
+        marker = idfun(item) 
+        # in old Python versions: 
+        # if seen.has_key(marker) 
+        # but in new ones: 
+        if marker in seen: continue 
+        seen[marker] = 1 
+        result.append(item) 
+    return result
+
+
+if len(remainder) > 1:
+    print "Too many/few extra arguments, aborting!"
+    print opts
+    print remainder
+    sys.exit(1)
+else:
+    sstr = remainder[0]
+
+
+p = re.compile(sstr, re.IGNORECASE)
+
+def execssh(sshcom,fullcom):
+      comparts = fullcom.split()
+      #print comparts
+      print "executing: %s %s" % (sshcom,fullcom)
+      os.execv(sshcom, comparts)
+
+def getmihosts(stack,server):
+  result = server.gethosts("1")
+  for hosts in result:
+      p = re.compile("\n")
+      result = re.search(p, hosts)
+      if result != None:
+          lines = hosts.split("\n")
+          hosts = ""
+          for line in lines:
+               hosts += "%s|" % line
+      parts = hosts.split("|")
+      for part in parts:
+          if part != "":
+             part = part.strip()
+             if part[-1] == ".":
+                good = part[0:len(part)-1]
+             else:
+                good = part
+          if part != "Reverse Lookup Failed: Host not found!":
+             if good not in stack:
+                full = "%s %s" % (good,good)
+                stack.append(full)
+  stack = uniqify(stack)
+  return stack
+
+sshkeys = {}
+def getuchosts(stack,server):
+    result = server.gethosts("1")
+    for hosts in result:
+	p = hosts.split("|")
+	sshkeys[p[0]]=p[2] 
+	alias = "%s-%s" % (p[0],p[1])
+	full = "%s %s" % (alias,p[1])
+	stack.append(full)
+    return stack
+
+
+def parse(s):
+    #Split lines.
+    lines = s.split("\n")
+    if usemi not in ("F","f"):
+       server = xmlrpclib.Server(machinfo_url)
+       lines = getmihosts(lines,server)
+       if useuc not in ("F","f"):
+       	  server = xmlrpclib.Server(uclookup_url)
+       	  lines = getuchosts(lines,server)
+    #Loop through lines.
+    stack = []
+    for line in lines:
+      result = re.search(p, line)
+      if result != None:
+        stack.append(line)
+    slen = len(stack)
+    # if we don't find any results
+    if slen == 0:
+       print "No result found. Attempting to execute default:"
+       start = "%s %s" % (sshbargs,sstr)
+       fullcom = start + "." + defaultdomain + " -l " + defaultlogin
+       execssh(sshcom,fullcom)
+    else:
+      # if we only find one result
+      if slen == 1:
+        result = 0
+      else:
+	# print a list of hosts matching
+        for n in range(0, slen):
+          halias = stack[n].split()
+          print n + 1, halias[0]
+	# select what host you want
+        result = int(raw_input()) - 1
+      sshargs = stack[result].split()
+      # if the login is specified in the file, use that
+      try:
+	login = sshargs[2]
+      except:
+	login = defaultlogin
+      # if the port is specified in the hostfile, use that
+      try:
+	port = sshargs[4]
+      except:
+	port = defaultport
+      # if the identity file is specified in the hostfile, use that
+      try:
+	keyfile = sshargs[3]
+      except:
+	# if it's not in the hostfile, look for it in the command line
+	try:
+		keyfile = identity
+	except:
+		# if it's not in the command line but we specified the -e option, use the ec2-identity
+		if ec2 == 'T':
+			keyfile = ec2identity
+      try:
+	keyfile
+      	fullcom = "%s %s -l %s -p %s -i %s" % (sshbargs,sshargs[1],login,port,keyfile)
+      except:
+      	fullcom = "%s %s -l %s -p %s" % (sshbargs,sshargs[1],login,port)
+
+      execssh(sshcom,fullcom)
+
+if usehosts == "T":
+  if os.path.exists(hostfile): 
+     f = open(hostfile)
+     try:
+       #Read whole file as one string.
+       data = f.read()
+     finally:
+       #Close file
+       f.close()
+  else:
+     print "No hostfile %s found, continuing.." % hostfile
+     data = ""
+else:
+   data = ""
+
+#Parse data string.
+config = parse(data)

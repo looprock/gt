@@ -1,0 +1,27 @@
+# edit this and move it to ~/.gt.cnf
+[default]
+## your ssh
+sshcom = "/usr/bin/ssh"
+
+# gt host file
+# format: 
+# [alias(!no spaces!)] [hostname/ip] [username] [identity file] [port]
+usehosts = "T"
+hostfile = "~/gt/hosts"
+
+## default domain if no host entry found
+defaultdomain = "int.domain.com"
+
+## default login if undefined
+defaultlogin = "username"
+#defaultlogin = getpass.getuser()
+
+## default port is undefined
+defaultport = "22"
+
+## extra arguments for ssh
+## pay attention to spacing before and after!
+sshbargs = "-X -Y"
+
+## default identity file, only used with -e option, overwritten from command line or file
+identity = "~/.ssh/id_rsa"
