@@ -3,3 +3,4 @@ box2 10.0.1.12
 dev1 dev1.domain.com
 dev2 dev2.domain.com root 
 ec2-instance1 alias.domain.com ubuntu /home/username/ec2/personal.pem
+ec2-instance1 alias.domain.com ubuntu /home/username/ec2/personal.pem 2222
